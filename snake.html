@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html;charset=utf-8">
+    <title>Stupid Snake</title>
+
+    <script id="vertex-shader" type="x-shader/x-vertex">
+attribute vec4 vPosition;
+attribute vec4 vColor;
+uniform vec2 posMan;
+uniform vec2 predirection;
+varying vec4 fColor;
+
+void
+main()
+{  
+    gl_Position.x = vPosition.x + posMan.x;
+    gl_Position.y = vPosition.y + posMan.y;
+    gl_Position.z = 0.0;
+    gl_Position.w = 1.0;
+    fColor = vColor;
+}
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+
+precision mediump float;
+uniform int colorType;
+uniform int isSnakeEaten;
+uniform vec4 targetColor;
+varying vec4 fColor;
+
+void
+main()
+{
+    gl_FragColor = vec4( 1.0, 0.0, 0.0, 1.0 );
+    
+    if(colorType==0){
+        if(isSnakeEaten==1){
+            gl_FragColor = targetColor;
+        }
+        else {
+            gl_FragColor = fColor;
+        }
+    }
+    
+    if(colorType==1){
+        gl_FragColor = targetColor;
+    }
+    
+    if(colorType==2){
+       gl_FragColor = vec4( 0.0, 0.5, 0.0, 1.0 );
+    }
+
+}
+</script>
+
+    <script type="text/javascript" src="./Common/webgl-utils.js"></script>
+    <script type="text/javascript" src="./Common/initShaders.js"></script>
+    <script type="text/javascript" src="./Common/MV.js"></script>
+    <!--<script type="text/javascript" src="Snake_ANS.js"></script> -->
+    <script>
+        var canvas;
+        var gl;
+        var btn_gizmo;
+        
+        var vPosition,tPosition,vColor,rColor;
+        var vBufferId,tBufferId,cBufferId,rBufferId;
+        var program;
+        
+        var posManLoc, posMan = vec2(0, 0);
+        var pre_directLoc;
+        var snake = [vec2(9,9),vec2(9,9),vec2(9,9)];
+        var snakeColor;
+        var isSnakeEatenLoc;
+        var foods = [];
+        var pre_direction = [vec2(0,0),vec2(0,0)];
+        var snakeStartLength = 3;
+        var snakeLengthCache = 3;
+        var map;
+        var mapSize = 19;
+        
+        var colorTypeLoc; //  0: Snake, 1: Food, 2: Gizmo
+        var targetColorLoc;
+        
+        var isGizmoOpen = false;
+
+        var colors = [
+            vec4(0.0, 0.0, 1.0, 1.0), // blue
+            vec4(0.0, 1.0, 1.0, 1.0), // cyan
+            vec4(1.0, 0.0, 1.0, 1.0), // magenta
+            vec4(0.0, 1.0, 1.0, 1.0) // cyan
+        ];
+
+        var vertices = [
+            vec2(-0.05, -0.05),
+            vec2(-0.05, 0.05),
+            vec2(0.05, 0.05),
+            vec2(0.05, -0.05)
+        ];
+        
+        var vertices2 = new Float32Array([-0.05, -0.05, 0, 0.05, 0.05, -0.05]);
+
+        window.onload = function init() {
+            
+            InitMap();
+            canvas = document.getElementById("gl-canvas");
+            btn_gizmo = document.getElementById("btn_gizmo");
+
+            gl = WebGLUtils.setupWebGL(canvas);
+            if (!gl) {
+                alert("WebGL isn't available");
+            }
+
+            //  Configure WebGL
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.clearColor(0.0, 0.0, 0.0, 1.0);
+
+            //  Load shaders and initialize attribute buffers
+            program = initShaders(gl, "vertex-shader", "fragment-shader");
+            gl.useProgram(program);
+
+            // Load the data into the GPU
+            vBufferId = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, vBufferId);
+            gl.bufferData(gl.ARRAY_BUFFER, flatten(vertices), gl.STATIC_DRAW);
+            
+            tBufferId = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, tBufferId);
+            gl.bufferData(gl.ARRAY_BUFFER, flatten(vertices2), gl.STATIC_DRAW);
+            
+            cBufferId = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, cBufferId);
+            gl.bufferData(gl.ARRAY_BUFFER, flatten(colors), gl.STATIC_DRAW);
+
+            vColor = gl.getAttribLocation(program, "vColor");
+            gl.vertexAttribPointer(vColor, 4, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(vColor);
+            
+            
+
+            posManLoc = gl.getUniformLocation(program, "posMan");
+            pre_directLoc = gl.getUniformLocation(program, "predirection");
+            colorTypeLoc = gl.getUniformLocation(program, "colorType");
+            targetColorLoc = gl.getUniformLocation(program, "targetColor");
+            isSnakeEatenLoc = gl.getUniformLocation(program, "isSnakeEaten");
+            gl.uniform1i(isSnakeEatenLoc,0);
+            
+            SetBody();
+
+            window.onkeydown = function(event) {
+                var key = String.fromCharCode(event.keyCode);
+
+                switch (key) {
+                    case 'w':
+                    case 'W':
+                        //if (posMan[1] > 0.89) break;
+                        var DestStatus = CheckDestination(vec2(0,-1));
+                        if(DestStatus == 0||DestStatus == 4) break;
+                        posMan[1] += 0.1;
+                        SetPreDirection(vec2(0, -1));
+                        CleanBody(function(){
+                            SnakeMove();
+                        });
+                        break;
+
+                    case 'a':
+                    case 'A':
+                        //if (posMan[0] < -0.89) break;
+                        var DestStatus = CheckDestination(vec2(-1,0));
+                        if(DestStatus == 0||DestStatus == 4) break;
+                        posMan[0] -= 0.1;
+                        SetPreDirection(vec2(-1, 0));
+                        CleanBody(function(){
+                            SnakeMove();
+                        });
+                        break;
+
+                    case 's':
+                    case 'S':
+                        //if (posMan[1] < -0.89) break;
+                        var DestStatus = CheckDestination(vec2(0,1));
+                        if(DestStatus == 0||DestStatus == 4) break;
+                        posMan[1] -= 0.1;
+                        SetPreDirection(vec2(0, 1));
+                        CleanBody(function(){
+                            SnakeMove();
+                        });
+                        break;
+
+                    case 'd':
+                    case 'D':
+                        //if (posMan[0] > 0.89) break;
+                        var DestStatus = CheckDestination(vec2(1,0));
+                        if(DestStatus == 0||DestStatus == 4) break;
+                        posMan[0] += 0.1;
+                        SetPreDirection(vec2(1, 0));
+                        CleanBody(function(){
+                            SnakeMove();
+                        });
+                        break;
+                }
+            };
+            
+            canvas.addEventListener("click",SetFood,false);
+            
+            btn_gizmo.addEventListener("click",function(){
+                isGizmoOpen = !isGizmoOpen;
+            },false);
+            
+            render();
+        };
+
+        function render() {
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            DrawMap();
+
+            window.requestAnimFrame(render);
+        }
+        
+        //
+        // InitMap :
+        // initialize the map content.
+        //
+        
+        function InitMap(){
+            var tempMap = [];
+            for(var i = 0; i< mapSize; i++){
+                var tempMapChild = [];
+                for(var j = 0; j < mapSize; j++){
+                    // status  0: Snake 1: Food 2: empty
+                    var temp = {id:(i*(mapSize-1))+i+j, status: 2};
+                    tempMapChild.push(temp);
+                }
+                tempMap.push(tempMapChild);
+            }
+            
+            map = tempMap;
+        }
+        
+        //
+        // CleanBody :
+        // Clean the snake body in the map.
+        //
+        
+        function CleanBody(callback){
+            for(var i =0; i< snake.length;i++){
+                map[snake[i][0]][snake[i][1]].status = 2;
+                map[snake[i][0]][snake[i][1]].color= vec4(0,0,0,1.0);
+            }
+            callback();
+        }
+        
+        //
+        // SnakeMove :
+        // Define the snake movement.
+        //
+        
+        function SnakeMove() {
+            var posManX = Math.round(posMan[0]*10);
+            var posManY = Math.round(posMan[1]*10);
+            var MapposManX = posManX + ((mapSize-1)/2);
+            var MapposManY = (posManY - ((mapSize-1)/2)) * -1;
+            
+            snake = [];
+            
+            console.log("MapposManX: " + MapposManX + " MapposManY: " + MapposManY);
+            console.log("posManX: " + posManX + " posManY: " + posManY + " Mapid: " + (MapposManX + (MapposManY * (mapSize-1))));
+            
+            
+            for(var i = 0; i < snakeLengthCache; i++){
+                var Tdir = vec2(MapposManX,MapposManY);
+                for(var j=0; j<i;j++){
+                    Tdir[0] -= pre_direction[j][0];
+                    Tdir[1] -= pre_direction[j][1];
+                }
+                snake.push(Tdir);
+            }
+            
+            SetBody();
+        }
+        
+        //
+        // SetBody :
+        // Set the new snake body.
+        //
+        
+        function SetBody() {
+            for(var i =0; i< snake.length;i++){
+                map[snake[i][0]][snake[i][1]].status = 0;
+            }
+        }
+        
+        //
+        // CheckDestination :
+        // Check the destination status.
+        //
+        
+        function CheckDestination(dir){
+            var posManX = Math.round(posMan[0]*10);
+            var posManY = Math.round(posMan[1]*10);
+            var X = posManX + ((mapSize-1)/2) + dir[0];
+            var Y = ((posManY - ((mapSize-1)/2)) * -1) + dir[1];
+            
+            console.log("X: " + X + " Y: " + Y + " Status: " + map[X][Y].status);
+            
+            if(X<0||X>mapSize-1||Y<0||Y>mapSize-1){
+                return 4; // border
+            }
+            if(map[X][Y].status == 0){
+                return 0; // snake
+            }
+            else if(map[X][Y].status == 1){
+                snakeColor = map[X][Y].color;
+                return 1; // food
+            }
+            else {
+                return 2; // empty
+            }
+        }
+        
+        //
+        // AddBody :
+        // Add the new body for the snake.
+        //
+        
+        function AddBody(callback) {
+            snakeLengthCache++;
+            pre_direction.push(vec2(0,0));
+            gl.uniform1i(isSnakeEatenLoc,1);
+            callback();
+        }
+        
+        //
+        // SetPreDirection : 
+        // Add direction to the frist element of the pre direction array
+        // If it is out of snake length, then pop the last one out.
+        //
+        
+        function SetPreDirection(dir){
+            if(CheckDestination(vec2(0,0))==1){
+                AddBody(function(){
+                    pre_direction.unshift(dir);
+            
+                    while(pre_direction.length>snakeLengthCache - 1){
+                        pre_direction.pop();
+                    }
+                })
+            }else{
+                pre_direction.unshift(dir);
+            
+                while(pre_direction.length>snakeLengthCache - 1){
+                    pre_direction.pop();
+                }
+            }
+        }
+        
+        //
+        // SetFood : 
+        // Set food to the map. 
+        //
+        
+        function SetFood(event){
+            
+            var PosX = -1 + 2*event.clientX/canvas.width;
+            var PosY = -1 + 2*(canvas.height-event.clientY)/canvas.height  + 0.1; // 0.1 為誤差
+            var NewPosX = Math.floor(PosX *10);
+            var NewPosY = Math.floor(PosY *10);        
+            var MapPosX = NewPosX + ((mapSize-1)/2);
+            var MapPosY = (NewPosY - ((mapSize-1)/2)) * -1;
+         
+            if(MapPosX<0||MapPosX>mapSize-1||MapPosY<0||MapPosY>mapSize-1){
+                return;
+            }
+            
+            if(map[MapPosX][MapPosY].status != 2){
+                return;
+            }
+            
+            if(foods== null){
+                foods.push(vec2(-NewPosX,-NewPosY));
+            }
+            else {
+                if(!foods.includes(vec2(-NewPosX,-NewPosY))){
+                    foods.push(vec2(-NewPosX,-NewPosY));
+                }
+            }
+            
+            map[MapPosX][MapPosY].status = 1;
+            
+            var r = Math.floor((Math.random() * 10) + 1) /10;
+            var g = Math.floor((Math.random() * 10) + 1) /10;
+            var b = Math.floor((Math.random() * 10) + 1) /10;
+            
+            map[MapPosX][MapPosY].color = vec4(r,g,b,1.0);
+            
+        }   
+        
+        //
+        // DrawMap : 
+        // Draw all the map element.
+        //
+        
+        function DrawMap() {
+            
+            for(var i = 0; i< mapSize; i++){
+                for(var j = 0; j < mapSize; j++){
+                    // status  1: Snake 2: Food 3: empty
+                    var newPosX = i-((mapSize-1)/2);
+                    var newPosY = (j - ((mapSize-1)/2)) * -1;
+                    
+                    gl.uniform2fv(posManLoc, vec2(newPosX / 10, newPosY /10));
+                    
+                    switch(map[i][j].status){
+                        case 0: // Snake
+                            gl.bindBuffer(gl.ARRAY_BUFFER, vBufferId);
+                            vPosition = gl.getAttribLocation(program, "vPosition");
+                            gl.vertexAttribPointer(vPosition, 2, gl.FLOAT, false, 0, 0);
+                            gl.enableVertexAttribArray(vPosition);
+                            if(snakeColor!=null){
+                               gl.uniform4fv(targetColorLoc,snakeColor);
+                            }
+                            gl.uniform1i(colorTypeLoc,0);
+                            gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+                            break;
+                        case 1: // Food
+                            gl.bindBuffer(gl.ARRAY_BUFFER, tBufferId);
+                            tPosition = gl.getAttribLocation(program, "vPosition");
+                            gl.vertexAttribPointer(tPosition, 2, gl.FLOAT, false, 0, 0);
+                            gl.enableVertexAttribArray(tPosition);
+                            gl.uniform4fv(targetColorLoc,map[i][j].color);
+                            gl.uniform1i(colorTypeLoc,1);
+                            gl.drawArrays(gl.TRIANGLES, 0, 3);
+                            break;
+                        case 2: // Empty
+                            if(isGizmoOpen){
+                             gl.bindBuffer(gl.ARRAY_BUFFER, vBufferId);
+                             vPosition = gl.getAttribLocation(program, "vPosition");
+                             gl.vertexAttribPointer(vPosition, 2, gl.FLOAT, false, 0, 0);
+                             gl.enableVertexAttribArray(vPosition);
+                             gl.uniform1i(colorTypeLoc,2);
+                             gl.drawArrays(gl.LINE_LOOP, 0, 4);
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                }
+            }
+        }
+
+    </script>
+</head>
+
+<body>
+    <canvas id="gl-canvas" width="512" height="512">
+Oops ... your browser doesn't support the HTML5 canvas element
+</canvas>
+<br>
+<button id="btn_gizmo">Map Gizmo (On / Off)</button>
+</body>
+
+</html>
+
+<!-- TODO: 可用滑鼠點擊畫面出現彩色食物(三角形, 顏色會變化, 可多個, 點在蛇身上無效, 點擊後食物會剛好出現在蛇可以走的格子上) 30分 -->
+<!-- TODO: 可移動蛇吃食物，蛇吃了後會變長一格，並且變成該食物的顏色 20分 -->
+<!-- TODO: 蛇不可以穿過自己的身體，碰撞後使用者仍可往其他方向移動不會死掉 20分 -->
+<!-- TODO: 新增 Gizmo  -->
